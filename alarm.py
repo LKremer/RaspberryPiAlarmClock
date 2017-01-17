@@ -5,7 +5,6 @@
 import httplib2
 from apiclient import discovery
 from oauth2client import client
-from oauth2client import tools
 from oauth2client.file import Storage
 
 # other dependencies:
@@ -15,8 +14,9 @@ import vlc
 # standard lib:
 import datetime
 import time
-import math
 import os
+import logging
+from logging.handlers import TimedRotatingFileHandler
 
 
 # some radio urls: https://beebotron.org/index3lite.php?reload
@@ -51,6 +51,7 @@ def get_credentials():
         flow.user_agent = APPLICATION_NAME
         print('Storing credentials to ' + credential_path)
     return credentials
+
 
 def get_next_alarm_datetime_from_google_calendar():
     """
@@ -93,6 +94,17 @@ class Alarm():
     def __init__(self):
         self.mp = None  # music player
         self.next_alarm_datetime = None
+        # initialize a rotating logger:
+        if not os.path.isdir('logs'):
+            os.mkdir('logs')
+        log_path = os.path.join('logs', 'log.txt')
+        self.logger = logging.getLogger("Rotating Log")
+        self.logger.setLevel(logging.INFO)
+        handler = TimedRotatingFileHandler(log_path, when="midnight", backupCount=5)
+        formatter = logging.Formatter(fmt='%(asctime)s %(levelname)-8s %(message)s',
+                                      datefmt='%Y-%m-%d %H:%M:%S')
+        handler.setFormatter(formatter)
+        self.logger.addHandler(handler)
 
     def tick(self):
         if self.next_alarm_datetime:
@@ -105,11 +117,12 @@ class Alarm():
 
     def get_next_alarm_time(self):
         try:
-            self.log('Checking Google Calendar for alarm times of the next 24 hours...')
+            self.logger.info('Checking Google Calendar for alarm times '
+                             'of the next 24 hours...')
             next_alarm_start_stop = \
                 get_next_alarm_datetime_from_google_calendar()
         except:
-            self.log('Could not access Google calendar, trying again later.')
+            self.logger.info('Could not access Google calendar, trying again later.')
             next_alarm_start_stop = None
         if next_alarm_start_stop:
             start_time, stop_time = next_alarm_start_stop
@@ -117,41 +130,37 @@ class Alarm():
                 self.next_alarm_datetime = stop_time
                 music_time = start_time.strftime('%H:%M')
                 alarm_time = stop_time.strftime('%H:%M')
-                self.log('scheduling music @{}, scheduling alarm @{}'.format(
+                self.logger.info('scheduling music @{}, scheduling alarm @{}'.format(
                     music_time, alarm_time))
                 schedule.clear('alarms')
                 schedule.every().day.at(music_time).do(self.play_music).tag('alarms')
                 schedule.every().day.at(alarm_time).do(self.ring_alarm).tag('alarms')
             else:
-                self.log('Already up to date.')
+                self.logger.info('Already up to date.')
         else:
-            self.log('No scheduled alarms were found in the 24 hours.')
+            self.logger.info('No scheduled alarms were found in the next 24 hours.')
         return
 
     def play_music(self):
-        self.log('Playing music.')
+        self.logger.info('Playing music.')
         self.mp = vlc.MediaPlayer(RADIO_URL)
         self.mp.play()
         return
 
     def stop_music(self):
-        self.log('Stopping music.')
+        self.logger.info('Stopping music.')
         if self.mp:
             self.mp.stop()
         return
 
     def ring_alarm(self):
         self.stop_music()
-        self.log('Playing alarm sound.')
+        self.logger.info('Playing alarm sound.')
         self.mp = vlc.MediaPlayer('alarm_sounds/annoying.mp3')
         self.mp.play()  # play alarm sound
         schedule.clear('alarms')  # reset alarms
         self.next_alarm_datetime = None
         return
-
-    def log(self, string):
-        timestamp = time.strftime('%H:%M:%S')
-        print('[\033[92m{}\033[0m] {: <65}'.format(timestamp, string))
 
 
 def main():
